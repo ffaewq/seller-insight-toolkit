@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { analyzeMarket, demoCompetitors, type Competitor } from "@/lib/competitor-analysis";
+import { analyzeMarket, classifyCompetitor, demoCompetitors, targetProfiles, type Competitor, type CompetitorClass, type TargetProfileId } from "@/lib/competitor-analysis";
 import type { SellerSpriteImport, SellerSpriteKeyword } from "@/lib/sellersprite-import";
 
 const formatCurrency = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
@@ -23,13 +23,25 @@ type ImportState = { files: SellerSpriteImport[]; keywords: SellerSpriteKeyword[
 export default function CompetitorLab({ ownTitle }: { ownTitle: string }) {
   const [rows, setRows] = useState<Competitor[]>(demoCompetitors);
   const [query, setQuery] = useState("");
+  const [profileId, setProfileId] = useState<TargetProfileId>("solar-y-branch");
+  const [customTarget, setCustomTarget] = useState("");
+  const [classFilter, setClassFilter] = useState<CompetitorClass | "all">("all");
+  const [analysisScope, setAnalysisScope] = useState<"direct" | "direct-adjacent">("direct");
+  const [manualClasses, setManualClasses] = useState<Record<string, CompetitorClass>>({});
   const [keywordQuery, setKeywordQuery] = useState("");
   const [importing, setImporting] = useState(false);
   const [importState, setImportState] = useState<ImportState>({ files: [], keywords: [], message: "", error: "" });
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
-  const analysis = useMemo(() => analyzeMarket(rows, ownTitle), [rows, ownTitle]);
-  const visible = rows.filter((row) => `${row.asin} ${row.brand} ${row.title} ${row.category || ""}`.toLowerCase().includes(query.toLowerCase()));
+  const classifiedRows = useMemo(() => rows.map((row) => {
+    const automatic = classifyCompetitor(row, profileId, customTarget);
+    const manual = manualClasses[row.id];
+    return { row, classification: manual ? { ...automatic, kind: manual, confidence: 100, reasons: ["已由你人工调整"] } : automatic, manual: Boolean(manual) };
+  }), [rows, profileId, customTarget, manualClasses]);
+  const analysisRows = classifiedRows.filter(({ classification }) => classification.kind === "direct" || (analysisScope === "direct-adjacent" && classification.kind === "adjacent")).map(({ row }) => row);
+  const analysis = useMemo(() => analyzeMarket(analysisRows, ownTitle), [analysisRows, ownTitle]);
+  const classCounts = classifiedRows.reduce<Record<CompetitorClass, number>>((counts, item) => ({ ...counts, [item.classification.kind]: counts[item.classification.kind] + 1 }), { direct: 0, adjacent: 0, excluded: 0 });
+  const visible = classifiedRows.filter(({ row, classification }) => (classFilter === "all" || classification.kind === classFilter) && `${row.asin} ${row.brand} ${row.title} ${row.category || ""}`.toLowerCase().includes(query.toLowerCase()));
   const visibleKeywords = importState.keywords.filter((row) => `${row.keyword} ${row.translation}`.toLowerCase().includes(keywordQuery.toLowerCase())).sort((a, b) => b.trafficShare - a.trafficShare || b.monthlySearchVolume - a.monthlySearchVolume);
   const setCell = <K extends keyof Competitor>(id: string, key: K, value: Competitor[K]) => setRows((current) => current.map((row) => row.id === id ? { ...row, [key]: value } : row));
   const addRow = () => setRows((current) => [...current, { id: `new-${Date.now()}`, asin: "", brand: "", title: "", price: 0, rating: 0, reviews: 0, monthlySales: 0, bsr: 0 }]);
@@ -43,7 +55,7 @@ export default function CompetitorLab({ ownTitle }: { ownTitle: string }) {
       const parsed = await Promise.all(Array.from(files).map(async (file) => parseSellerSpriteWorkbook(await file.arrayBuffer(), file.name)));
       const products = parsed.flatMap((item) => item.products);
       const keywords = parsed.flatMap((item) => item.keywords);
-      if (products.length) setRows(products);
+      if (products.length) { setRows(products); setManualClasses({}); }
       const unknown = parsed.filter((item) => item.kind === "unknown").map((item) => item.fileName);
       const warnings = parsed.flatMap((item) => item.warnings);
       setImportState({ files: parsed, keywords, message: `已识别 ${products.length} 个产品、${keywords.length} 个关键词${parsed.length > 1 ? `，来自 ${parsed.length} 个文件` : ""}。`, error: [...(unknown.length ? [`无法识别：${unknown.join("、")}`] : []), ...warnings].join(" ") });
@@ -56,8 +68,8 @@ export default function CompetitorLab({ ownTitle }: { ownTitle: string }) {
   };
 
   const exportCsv = () => {
-    const head = "ASIN,Brand,Title,Price,Rating,Reviews,Monthly Sales,BSR";
-    const body = rows.map((row) => [row.asin, row.brand, `"${row.title.replace(/"/g, '""')}"`, row.price, row.rating, row.reviews, row.monthlySales, row.bsr].join(",")).join("\n");
+    const head = "ASIN,Brand,Title,Classification,Classification Reason,Price,Rating,Reviews,Monthly Sales,BSR";
+    const body = classifiedRows.map(({ row, classification }) => [row.asin, row.brand, `"${row.title.replace(/"/g, '""')}"`, classification.kind, `"${classification.reasons.join("；").replace(/"/g, '""')}"`, row.price, row.rating, row.reviews, row.monthlySales, row.bsr].join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([`${head}\n${body}`], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = "seller-insight-competitors.csv"; anchor.click(); URL.revokeObjectURL(url);
   };
@@ -74,7 +86,7 @@ export default function CompetitorLab({ ownTitle }: { ownTitle: string }) {
       </section>
 
       <section className="market-summary">
-        <div className="metric-card card"><span>价格中位数</span><strong>${analysis.medianPrice.toFixed(2)}</strong><small>均价 ${analysis.averagePrice.toFixed(2)}</small></div>
+        <div className="metric-card card"><span>价格中位数</span><strong>${analysis.medianPrice.toFixed(2)}</strong><small>{analysisRows.length} 个有效样本 · 均价 ${analysis.averagePrice.toFixed(2)}</small></div>
         <div className="metric-card card"><span>月销量样本</span><strong>{analysis.monthlySales.toLocaleString()}</strong><small>预估销售额 {formatCurrency(analysis.monthlyRevenue)}</small></div>
         <div className="metric-card card"><span>评价门槛</span><strong>{analysis.medianReviews.toLocaleString()}</strong><small>平均评分 {analysis.averageRating.toFixed(2)}</small></div>
         <div className={`metric-card barrier-${analysis.entryBarrier.toLowerCase()} card`}><span>进入难度</span><strong>{analysis.entryBarrier === "High" ? "高" : analysis.entryBarrier === "Medium" ? "中等" : "较低"}</strong><small>Top 3 销量占比 {analysis.topThreeShare}%</small></div>
@@ -89,8 +101,14 @@ export default function CompetitorLab({ ownTitle }: { ownTitle: string }) {
       <section className="competitor-grid">
         <div className="competitor-table-card card">
           <div className="section-heading"><div><span className="eyebrow">竞品样本</span><h2>把同类产品放在同一张桌面上</h2></div><div className="table-actions"><input ref={csvRef} type="file" accept=".csv" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (file) { const parsed = parseCsv(await file.text()); if (parsed.length) setRows(parsed); } event.target.value = ""; }} /><button className="ghost-button" onClick={() => csvRef.current?.click()}>通用 CSV</button><button className="ghost-button" onClick={exportCsv}>导出</button><button className="primary-button small" onClick={addRow}>＋ 添加</button></div></div>
-          <div className="table-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 ASIN、品牌、标题或类目" /><button className="text-button" onClick={() => { setRows(demoCompetitors); setImportState({ files: [], keywords: [], message: "", error: "" }); }}>恢复示例</button></div>
-          <div className="data-table-wrap"><table className="data-table"><thead><tr><th>ASIN / 品牌</th><th>竞品标题</th><th>价格</th><th>评分</th><th>评价</th><th>月销量</th><th>BSR</th><th /></tr></thead><tbody>{visible.map((row) => <tr key={row.id}><td><div className="asin-with-image">{row.imageUrl && <img src={row.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />}<div><input value={row.asin} onChange={(event) => setCell(row.id, "asin", event.target.value)} placeholder="ASIN"/><input className="sub-input" value={row.brand} onChange={(event) => setCell(row.id, "brand", event.target.value)} placeholder="品牌"/></div></div></td><td><textarea value={row.title} onChange={(event) => setCell(row.id, "title", event.target.value)} rows={2}/><small className="category-line">{row.category || "未记录类目"}</small></td><td><input type="number" step=".01" value={row.price} onChange={(event) => setCell(row.id, "price", Number(event.target.value))}/></td><td><input type="number" step=".1" value={row.rating} onChange={(event) => setCell(row.id, "rating", Number(event.target.value))}/></td><td><input type="number" value={row.reviews} onChange={(event) => setCell(row.id, "reviews", Number(event.target.value))}/></td><td><input type="number" value={row.monthlySales} onChange={(event) => setCell(row.id, "monthlySales", Number(event.target.value))}/></td><td><input type="number" value={row.bsr} onChange={(event) => setCell(row.id, "bsr", Number(event.target.value))}/></td><td><button className="remove-button" aria-label={`删除 ${row.asin || "空白行"}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button></td></tr>)}</tbody></table></div>
+          <div className="classification-controls">
+            <label>分析对象<select value={profileId} onChange={(event) => { setProfileId(event.target.value as TargetProfileId); setManualClasses({}); setClassFilter("all"); }}>{targetProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
+            {profileId === "custom" && <label>自定义产品特征<input value={customTarget} onChange={(event) => setCustomTarget(event.target.value)} placeholder="例如：12AWG SAE 单插快速连接线" /></label>}
+            <label>市场指标使用<select value={analysisScope} onChange={(event) => setAnalysisScope(event.target.value as "direct" | "direct-adjacent")}><option value="direct">仅直接竞品</option><option value="direct-adjacent">直接 + 间接竞品</option></select></label>
+          </div>
+          <div className="classification-summary"><b>自动分类完成</b><span>市场结论当前使用 {analysisRows.length} 个样本</span><button className={classFilter === "all" ? "active" : ""} onClick={() => setClassFilter("all")}>全部 {rows.length}</button><button className={classFilter === "direct" ? "active direct" : "direct"} onClick={() => setClassFilter("direct")}>直接竞品 {classCounts.direct}</button><button className={classFilter === "adjacent" ? "active adjacent" : "adjacent"} onClick={() => setClassFilter("adjacent")}>间接竞品 {classCounts.adjacent}</button><button className={classFilter === "excluded" ? "active excluded" : "excluded"} onClick={() => setClassFilter("excluded")}>无关产品 {classCounts.excluded}</button></div>
+          <div className="table-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 ASIN、品牌、标题或类目" /><button className="text-button" onClick={() => { setRows(demoCompetitors); setManualClasses({}); setImportState({ files: [], keywords: [], message: "", error: "" }); }}>恢复示例</button></div>
+          <div className="data-table-wrap"><table className="data-table classified-table"><thead><tr><th>ASIN / 品牌</th><th>竞品标题</th><th>分类与依据</th><th>价格</th><th>评分</th><th>评价</th><th>月销量</th><th>BSR</th><th /></tr></thead><tbody>{visible.map(({ row, classification, manual }) => <tr key={row.id} className={`row-${classification.kind}`}><td><div className="asin-with-image">{row.imageUrl && <img src={row.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />}<div><input value={row.asin} onChange={(event) => setCell(row.id, "asin", event.target.value)} placeholder="ASIN"/><input className="sub-input" value={row.brand} onChange={(event) => setCell(row.id, "brand", event.target.value)} placeholder="品牌"/></div></div></td><td><textarea value={row.title} onChange={(event) => setCell(row.id, "title", event.target.value)} rows={2}/><small className="category-line">{row.category || "未记录类目"}</small></td><td><select className={`class-select class-${classification.kind}`} value={classification.kind} onChange={(event) => setManualClasses((current) => ({ ...current, [row.id]: event.target.value as CompetitorClass }))}><option value="direct">直接竞品</option><option value="adjacent">间接竞品</option><option value="excluded">无关产品</option></select><small className="class-reason">{manual ? "人工调整" : `${classification.confidence}% · ${classification.reasons[0]}`}</small></td><td><input type="number" step=".01" value={row.price} onChange={(event) => setCell(row.id, "price", Number(event.target.value))}/></td><td><input type="number" step=".1" value={row.rating} onChange={(event) => setCell(row.id, "rating", Number(event.target.value))}/></td><td><input type="number" value={row.reviews} onChange={(event) => setCell(row.id, "reviews", Number(event.target.value))}/></td><td><input type="number" value={row.monthlySales} onChange={(event) => setCell(row.id, "monthlySales", Number(event.target.value))}/></td><td><input type="number" value={row.bsr} onChange={(event) => setCell(row.id, "bsr", Number(event.target.value))}/></td><td><button className="remove-button" aria-label={`删除 ${row.asin || "空白行"}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button></td></tr>)}</tbody></table></div>
           <p className="table-note">卖家精灵搜索结果可能混入相邻产品和非直接竞品。系统会完整保留原始数据，但正式结论应基于筛选后的同类产品。</p>
         </div>
 

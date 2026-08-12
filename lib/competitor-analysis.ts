@@ -18,6 +18,27 @@ export type Competitor = {
   raw?: Record<string, unknown>;
 };
 
+export type CompetitorClass = "direct" | "adjacent" | "excluded";
+export type TargetProfileId = "solar-y-branch" | "sae-quick-connect" | "custom";
+
+export type CompetitorClassification = {
+  kind: CompetitorClass;
+  confidence: number;
+  reasons: string[];
+};
+
+export type TargetProfile = {
+  id: TargetProfileId;
+  label: string;
+  description: string;
+};
+
+export const targetProfiles: TargetProfile[] = [
+  { id: "solar-y-branch", label: "太阳能 Y 型并联线", description: "Y Branch、2-to-1、4-to-1、MFF/FMM 等并联连接线" },
+  { id: "sae-quick-connect", label: "SAE 快速连接线", description: "SAE Quick Disconnect、Extension Cable、单插连接线" },
+  { id: "custom", label: "自定义分析对象", description: "按你填写的产品名称与关键词判断相关性" },
+];
+
 export type MarketAnalysis = {
   averagePrice: number;
   medianPrice: number;
@@ -44,6 +65,44 @@ const median = (values: number[]) => {
 const money = (value: number) => Math.round(value * 100) / 100;
 
 const termsFrom = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g," ").split(" ").filter((term) => term.length > 2 && !stopwords.has(term) && !/^\d+$/.test(term));
+
+const includesAny = (source: string, terms: string[]) => terms.some((term) => source.includes(term));
+
+export function classifyCompetitor(row: Competitor, profileId: TargetProfileId, customTarget = ""): CompetitorClassification {
+  const source = `${row.title} ${row.category || ""}`.toLowerCase().replace(/[_–—-]+/g, " ");
+  const hardExclusions = ["solar panel kit", "solar panel charger", "charge controller", "battery maintainer", "diesel heater", "battery tender", "inverter", "mounting bracket"];
+  if (includesAny(source, hardExclusions)) {
+    return { kind: "excluded", confidence: 96, reasons: ["商品主体属于面板、电池、控制器或其他非连接线产品"] };
+  }
+
+  if (profileId === "solar-y-branch") {
+    const solar = includesAny(source, ["solar", "photovoltaic", "pv "]);
+    const parallel = includesAny(source, ["y branch", "y splitter", "parallel", "2 to 1", "2to1", "4 to 1", "4to1", "4 to 2", "4to2", "mff", "fmm"]);
+    const connector = includesAny(source, ["connector", "adapter", "branch", "splitter"]);
+    const wrongFamily = includesAny(source, ["sae extension", "sae quick", "xt60", "anderson", "cigarette lighter", "extension cord"]);
+    if (solar && parallel && connector && !wrongFamily) return { kind: "direct", confidence: 94, reasons: ["同时匹配太阳能、并联拓扑和连接器结构"] };
+    if ((solar && connector) || (parallel && connector)) return { kind: "adjacent", confidence: 78, reasons: ["属于太阳能连接配件，但结构或用途未完全匹配"] };
+    return { kind: "excluded", confidence: wrongFamily ? 94 : 82, reasons: [wrongFamily ? "属于 SAE 或其他接口产品族" : "未匹配太阳能并联连接线的核心结构"] };
+  }
+
+  if (profileId === "sae-quick-connect") {
+    const sae = /(^|\s)sae(\s|$)/.test(source);
+    const cable = includesAny(source, ["cable", "wire", "cord", "connector", "plug", "pigtail"]);
+    const quick = includesAny(source, ["quick disconnect", "quick connect", "extension", "single plug", "2 pin", "2pin"]);
+    const wrongFamily = includesAny(source, ["y branch", "parallel connector", "mc4", "4 to 1", "4to1", "2 to 1", "2to1"]);
+    if (sae && cable && quick && !wrongFamily) return { kind: "direct", confidence: 93, reasons: ["同时匹配 SAE 接口、线材和快速连接用途"] };
+    if (sae && cable) return { kind: "adjacent", confidence: 76, reasons: ["属于 SAE 连接配件，但形态或用途需要人工确认"] };
+    return { kind: "excluded", confidence: wrongFamily ? 95 : 84, reasons: [wrongFamily ? "属于太阳能并联接口产品族" : "未匹配 SAE 快速连接线的核心特征"] };
+  }
+
+  const targetTerms = Array.from(new Set(termsFrom(customTarget)));
+  if (!targetTerms.length) return { kind: "adjacent", confidence: 40, reasons: ["尚未填写自定义分析对象，等待人工分类"] };
+  const matched = targetTerms.filter((term) => source.includes(term));
+  const ratio = matched.length / targetTerms.length;
+  if (ratio >= .65) return { kind: "direct", confidence: Math.round(70 + ratio * 25), reasons: [`匹配 ${matched.length}/${targetTerms.length} 个目标特征词：${matched.slice(0, 4).join("、")}`] };
+  if (ratio >= .3) return { kind: "adjacent", confidence: Math.round(55 + ratio * 30), reasons: [`部分匹配目标特征词：${matched.slice(0, 4).join("、")}`] };
+  return { kind: "excluded", confidence: 80, reasons: ["与自定义分析对象的核心特征重合度较低"] };
+}
 
 export function analyzeMarket(rows: Competitor[], ownTitle: string): MarketAnalysis {
   const valid = rows.filter((row) => row.title.trim() || row.asin.trim());
