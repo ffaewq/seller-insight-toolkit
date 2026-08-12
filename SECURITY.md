@@ -4,6 +4,12 @@
 
 The current release processes listing and competitor inputs in the browser and does not require seller credentials, marketplace cookies, API keys, or an OpenAI API key.
 
+SellerSprite spreadsheets are parsed locally in the first import milestone. Remote image URLs may be requested by the browser when image previews are shown.
+
+When Supabase persistence is enabled, row-level security must remain enabled and every application table must scope access by `owner_id = auth.uid()`. The `competitor-images` bucket is private and uses the authenticated user ID as the first storage-path segment.
+
+Only `NEXT_PUBLIC_SUPABASE_URL` and the Supabase publishable key may be exposed to the browser. Database passwords, service-role keys, AI provider keys, Amazon refresh tokens, and Selling Partner API credentials belong in server-only environment variables and must never use a `NEXT_PUBLIC_` prefix.
+
 ## Threat model
 
 Contributors should consider:
