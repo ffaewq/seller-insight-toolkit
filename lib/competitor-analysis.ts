@@ -8,6 +8,14 @@ export type Competitor = {
   reviews: number;
   monthlySales: number;
   bsr: number;
+  imageUrl?: string;
+  parentAsin?: string;
+  category?: string;
+  bullets?: string[];
+  productUrl?: string;
+  monthlyRevenue?: number;
+  listedAt?: string;
+  raw?: Record<string, unknown>;
 };
 
 export type MarketAnalysis = {

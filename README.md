@@ -17,7 +17,7 @@ The project is designed for marketplace operators who need a transparent, local-
 - Keyword coverage across title, bullets, and backend search terms
 - Detection of backend repetition, unsupported claims, promotions, URLs, all-caps text, and punctuation issues
 - Category coverage for compatibility, specifications, installation, use cases, benefits, and evidence
-- Editable competitor matrix with CSV import/export
+- Editable competitor matrix with SellerSprite Excel and CSV import/export
 - Price, rating, review, sales, revenue, BSR, concentration, and entry-barrier summaries
 - Competitor title frequency and own-title keyword gaps
 - Markdown and JSON audit report export
@@ -52,12 +52,18 @@ The competitor importer recognizes these headers:
 ASIN,Brand,Title,Price,Rating,Reviews,Monthly Sales,BSR
 ```
 
+## SellerSprite imports
+
+The competitor lab recognizes product exports with `ASIN` / `商品标题` headers and reverse-ASIN keyword exports with `流量词` / `自然排名` headers. Select one or several `.xlsx`, `.xls`, or `.csv` files. Product rows, main-image links, listing copy, market metrics, keyword traffic, ranking, purchase, and PPC fields are normalized while the original row remains available as raw data for auditability.
+
+The first import milestone is browser-local. The Supabase schema in `supabase/migrations/202608130001_initial_schema.sql` adds owner-scoped projects, import batches, historical product and keyword snapshots, private competitor-image storage, and AI analysis records.
+
 ## Roadmap
 
 - Category rule packs maintained as versioned data
 - Bullet-level competitor copy comparison
 - Image and review-theme analysis
-- SellerSprite and common research-export adapters
+- Supabase persistence and authenticated workspaces
 - Deterministic test fixtures for scoring changes
 - Optional OpenAI API workflow for maintainer triage and report explanations
 
