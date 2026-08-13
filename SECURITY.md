@@ -2,13 +2,15 @@
 
 ## Data boundary
 
-The current release processes listing and competitor inputs in the browser and does not require seller credentials, marketplace cookies, API keys, or an OpenAI API key.
+The current release parses listing, competitor, keyword, review, BSR, and sales-history files in the browser. It never requires seller credentials or marketplace cookies.
 
 SellerSprite spreadsheets are parsed locally in the first import milestone. Remote image URLs may be requested by the browser when image previews are shown.
 
-When Supabase persistence is enabled, row-level security must remain enabled and every application table must scope access by `owner_id = auth.uid()`. The `competitor-images` bucket is private and uses the authenticated user ID as the first storage-path segment.
+Supabase email authentication and persistence use row-level security; every application table scopes access by `owner_id = auth.uid()`. The `competitor-images` bucket is private and uses the authenticated user ID as the first storage-path segment. Saving to the cloud is an explicit user action.
 
 Only `NEXT_PUBLIC_SUPABASE_URL` and the Supabase publishable key may be exposed to the browser. Database passwords, service-role keys, AI provider keys, Amazon refresh tokens, and Selling Partner API credentials belong in server-only environment variables and must never use a `NEXT_PUBLIC_` prefix.
+
+AI routes verify the Supabase access token, cap serialized context size, and read provider credentials only on the server. Production operators should also add durable per-user rate limits before granting broad public access to a shared paid AI key.
 
 ## Threat model
 
