@@ -7,6 +7,7 @@ import AIAnalysisPanel from "@/components/AIAnalysisPanel";
 import AuthProvider, { useAuth } from "@/components/AuthProvider";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
 import WorkspaceProvider from "@/components/WorkspaceProvider";
+import UnifiedReportPanel from "@/components/UnifiedReportPanel";
 
 type WorkspaceTab = "audit" | "competitors" | "ai" | "reports";
 
@@ -136,17 +137,6 @@ function AuditResults({ result, filter, setFilter }: { result: AuditResult; filt
   );
 }
 
-function ReportsPanel({ listing, result }: { listing: ListingInput; result: AuditResult }) {
-  const [copied,setCopied] = useState(false);
-  const report = useMemo(() => {
-    const issueLines = result.findings.map((item,index) => `${index + 1}. [${severityLabels[item.severity]}] ${item.field} — ${item.title}\n   - ${item.detail}\n   - 建议：${item.action}`).join("\n");
-    const keywordLines = result.keywords.map((item) => `| ${item.keyword} | ${item.title ? "✓" : "—"} | ${item.bullets ? "✓" : "—"} | ${item.searchTerms ? "✓" : "—"} | ${item.covered ? "已覆盖" : "缺失"} |`).join("\n");
-    return `# Seller Insight Listing Audit\n\n- Marketplace: ${listing.marketplace}\n- Category profile: ${listing.category}\n- Overall score: ${result.overall}/100\n- Compliance gate: ${result.gate}\n- Generated: ${new Date().toLocaleString("zh-CN")}\n\n## Scorecard\n\n| Dimension | Score |\n| --- | ---: |\n| Compliance | ${result.scores.compliance} |\n| Keywords & SEO | ${result.scores.seo} |\n| Category relevance | ${result.scores.relevance} |\n| Persuasion | ${result.scores.persuasion} |\n| Readability | ${result.scores.readability} |\n\n## Listing\n\n### Title\n${listing.title}\n\n### Bullets\n${listing.bullets.map((item,index) => `${index + 1}. ${item}`).join("\n")}\n\n## Findings\n\n${issueLines}\n\n## Keyword coverage\n\n| Keyword | Title | Bullets | Search Terms | Status |\n| --- | :---: | :---: | :---: | --- |\n${keywordLines}\n\n> Automated checks support, but do not replace, human policy review.\n`;
-  },[listing,result]);
-  const download = (content:string,name:string,type:string) => { const url=URL.createObjectURL(new Blob([content],{type})); const a=document.createElement("a");a.href=url;a.download=name;a.click();URL.revokeObjectURL(url); };
-  return <div className="report-page"><section className="report-hero card"><div><span className="eyebrow">可复核的输出</span><h2>把检查结果交给美工、文案或负责人</h2><p>报告保留评分依据、问题位置和修改动作，方便后续复查，而不是只给一个无法解释的总分。</p></div><ScoreRing value={result.overall}/></section><section className="export-grid"><article className="export-card card"><span className="file-type">MD</span><h3>Listing 审核报告</h3><p>适合放进 GitHub、Notion 或直接发给文案协作。</p><button className="primary-button" onClick={() => download(report,"listing-audit-report.md","text/markdown")}>下载 Markdown</button></article><article className="export-card card"><span className="file-type json">JSON</span><h3>结构化分析数据</h3><p>适合后续接入 Skill、自动化流程或二次开发。</p><button className="primary-button" onClick={() => download(JSON.stringify({listing,result},null,2),"listing-audit-data.json","application/json")}>下载 JSON</button></article><article className="export-card card"><span className="file-type copy">TXT</span><h3>复制完整报告</h3><p>一键复制到聊天、邮件或任务管理工具。</p><button className="ghost-button report-copy" onClick={async() => {await navigator.clipboard.writeText(report);setCopied(true);window.setTimeout(() => setCopied(false),1600);}}>{copied ? "已复制" : "复制到剪贴板"}</button></article></section><section className="report-preview card"><div className="section-heading"><div><span className="eyebrow">报告预览</span><h2>{listing.title || "Untitled listing"}</h2></div><span className={`report-gate gate-label-${result.gate}`}>{result.gate === "blocked" ? "存在合规阻断" : result.gate === "review" ? "建议人工复核" : "基础检查通过"}</span></div><pre>{report}</pre></section></div>;
-}
-
 function SellerInsightApp() {
   const { configured } = useAuth();
   const [tab, setTab] = useState<WorkspaceTab>("audit");
@@ -182,7 +172,7 @@ function SellerInsightApp() {
       <div className="workspace">
         <header className="topbar"><div><span className="mobile-brand">Seller Insight</span><h1>{tab === "audit" ? "Listing 质量检查" : tab === "competitors" ? "竞品与市场研究" : tab === "ai" ? "AI 分析中心" : "分析报告"}</h1><p>{tab === "audit" ? "适用于不同平台与类目：先排除合规风险，再优化搜索与转化。" : tab === "competitors" ? "清洗多来源数据，判断市场结构、客户需求与文案缺口。" : tab === "ai" ? "基于结构化证据生成结论和下一步行动。" : "导出带有依据和修改动作的可复核结果。"}</p></div><div className="top-actions"><span className="saved-state"><i>✓</i> 已自动保存 · {savedAt}</span>{configured ? <ProjectSwitcher /> : <span className="privacy-pill">Browser-local</span>}</div></header>
 
-        {tab === "audit" ? <div className="audit-layout"><ListingEditor value={listing} onChange={setListing} onAnalyze={() => { setResult(auditListing(listing)); setFilter("all"); }} /><AuditResults result={result} filter={filter} setFilter={setFilter} /></div> : tab === "competitors" ? <CompetitorLab ownTitle={listing.title}/> : tab === "ai" ? <AIAnalysisPanel listing={listing} result={result}/> : <ReportsPanel listing={listing} result={result}/>} 
+        {tab === "audit" ? <div className="audit-layout"><ListingEditor value={listing} onChange={setListing} onAnalyze={() => { setResult(auditListing(listing)); setFilter("all"); }} /><AuditResults result={result} filter={filter} setFilter={setFilter} /></div> : tab === "competitors" ? <CompetitorLab ownTitle={listing.title}/> : tab === "ai" ? <AIAnalysisPanel listing={listing} result={result}/> : <UnifiedReportPanel listing={listing} result={result}/>} 
       </div>
     </main>
   );
