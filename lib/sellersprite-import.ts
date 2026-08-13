@@ -25,13 +25,49 @@ export type SellerSpriteKeyword = {
   raw: Record<string, unknown>;
 };
 
+export type SellerSpriteReview = {
+  asin: string;
+  title: string;
+  content: string;
+  verifiedPurchase: boolean;
+  vine: boolean;
+  variation: string;
+  rating: number;
+  helpfulVotes: number;
+  imageUrls: string[];
+  hasVideo: boolean;
+  videoUrls: string[];
+  reviewUrl: string;
+  reviewer: string;
+  country: string;
+  reviewedAt: string;
+  raw: Record<string, unknown>;
+};
+
+export type SellerSpriteRankPoint = {
+  observedAt: string;
+  ranks: Record<string, number | null>;
+  raw: Record<string, unknown>;
+};
+
+export type SellerSpriteSalesPoint = {
+  period: string;
+  sales: number;
+  revenue: number;
+  granularity: "month" | "year";
+  raw: Record<string, unknown>;
+};
+
 export type SellerSpriteImport = {
   fileName: string;
-  kind: "products" | "keywords" | "unknown";
+  kind: "products" | "keywords" | "keyword_mining" | "reviews" | "bsr_history" | "sales_history" | "unknown";
   sheetName: string;
   sourceAsin: string | null;
   products: Competitor[];
   keywords: SellerSpriteKeyword[];
+  reviews: SellerSpriteReview[];
+  rankHistory: SellerSpriteRankPoint[];
+  salesHistory: SellerSpriteSalesPoint[];
   warnings: string[];
 };
 
@@ -88,8 +124,8 @@ function productRows(rows: Record<string, unknown>[], fileName: string): Competi
 }
 
 function keywordRows(rows: Record<string, unknown>[]): SellerSpriteKeyword[] {
-  return rows.filter((row) => text(row["流量词"])).map((row) => ({
-    keyword: text(row["流量词"]).toLowerCase(),
+  return rows.filter((row) => text(row["流量词"] || row["关键词"])).map((row) => ({
+    keyword: text(row["流量词"] || row["关键词"]).toLowerCase(),
     translation: text(row["关键词翻译"]),
     trafficShare: numberValue(row["流量占比"]),
     weeklyImpressions: numberValue(row["预估周曝光量"]),
@@ -113,9 +149,38 @@ function keywordRows(rows: Record<string, unknown>[]): SellerSpriteKeyword[] {
   }));
 }
 
+function reviewRows(rows: Record<string, unknown>[]): SellerSpriteReview[] {
+  const splitUrls = (value: unknown) => text(value).split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+  return rows.filter((row) => text(row["ASIN"]) && (text(row["标题"]) || text(row["内容"]))).map((row) => ({
+    asin: text(row["ASIN"]).toUpperCase(), title: text(row["标题"]), content: text(row["内容"]),
+    verifiedPurchase: text(row["VP评论"]).toUpperCase() === "Y", vine: Boolean(text(row["Vine Voice评论"])),
+    variation: text(row["型号"]), rating: numberValue(row["星级"]), helpfulVotes: numberValue(row["赞同数"]),
+    imageUrls: splitUrls(row["图片地址"]), hasVideo: Boolean(text(row["是否有视频"])), videoUrls: splitUrls(row["视频地址"]),
+    reviewUrl: text(row["评论链接"]), reviewer: text(row["评论人"]), country: text(row["所属国家"]),
+    reviewedAt: isoDate(row["评论时间"]), raw: row,
+  }));
+}
+
+function rankRows(rows: Record<string, unknown>[], headers: string[]): SellerSpriteRankPoint[] {
+  const rankHeaders = headers.filter((header) => header.startsWith("BSR排名["));
+  return rows.filter((row) => text(row["时间"])).map((row) => ({
+    observedAt: isoDate(row["时间"]),
+    ranks: Object.fromEntries(rankHeaders.map((header) => [header.slice(6, -1), text(row[header]) ? numberValue(row[header]) : null])),
+    raw: row,
+  }));
+}
+
+function salesRows(rows: Record<string, unknown>[], granularity: "month" | "year"): SellerSpriteSalesPoint[] {
+  const periodHeader = granularity === "month" ? "月份" : "年份";
+  return rows.filter((row) => text(row[periodHeader])).map((row) => ({
+    period: text(row[periodHeader]), sales: numberValue(row["销量"]), revenue: numberValue(row["销售额($)"]), granularity, raw: row,
+  }));
+}
+
 export function parseSellerSpriteWorkbook(buffer: ArrayBuffer, fileName: string): SellerSpriteImport {
   const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
   const warnings: string[] = [];
+  const empty = { products: [] as Competitor[], keywords: [] as SellerSpriteKeyword[], reviews: [] as SellerSpriteReview[], rankHistory: [] as SellerSpriteRankPoint[], salesHistory: [] as SellerSpriteSalesPoint[] };
   for (const sheetName of workbook.SheetNames) {
     if (/^(Brands|Sellers|Unique Words|Note)$/i.test(sheetName)) continue;
     const sheet = workbook.Sheets[sheetName];
@@ -124,14 +189,32 @@ export function parseSellerSpriteWorkbook(buffer: ArrayBuffer, fileName: string)
     if (headers.includes("ASIN") && headers.includes("商品标题")) {
       const products = productRows(rows, fileName);
       if (!products.length) warnings.push("识别到产品表头，但没有有效 ASIN 行。");
-      return { fileName, kind: "products", sheetName, sourceAsin: null, products, keywords: [], warnings };
+      return { fileName, kind: "products", sheetName, sourceAsin: null, ...empty, products, warnings };
     }
     if (headers.includes("流量词") && headers.includes("自然排名")) {
       const match = sheetName.match(/(B[A-Z0-9]{9})/i);
       const keywords = keywordRows(rows);
       if (!match) warnings.push("关键词表未在工作表名称中找到来源 ASIN，导入时需要手工选择对应竞品。");
-      return { fileName, kind: "keywords", sheetName, sourceAsin: match?.[1].toUpperCase() || null, products: [], keywords, warnings };
+      return { fileName, kind: "keywords", sheetName, sourceAsin: match?.[1].toUpperCase() || null, ...empty, keywords, warnings };
+    }
+    if (headers.includes("关键词") && headers.includes("月搜索量")) {
+      return { fileName, kind: "keyword_mining", sheetName, sourceAsin: null, ...empty, keywords: keywordRows(rows), warnings };
+    }
+    if (headers.includes("ASIN") && headers.includes("内容") && headers.includes("星级")) {
+      const match = sheetName.match(/(B[A-Z0-9]{9})/i);
+      return { fileName, kind: "reviews", sheetName, sourceAsin: match?.[1].toUpperCase() || text(rows[0]?.["ASIN"]).toUpperCase() || null, ...empty, reviews: reviewRows(rows), warnings };
+    }
+    if (headers.includes("时间") && headers.some((header) => header.startsWith("BSR排名["))) {
+      const match = sheetName.match(/(B[A-Z0-9]{9})/i);
+      return { fileName, kind: "bsr_history", sheetName, sourceAsin: match?.[1].toUpperCase() || null, ...empty, rankHistory: rankRows(rows, headers), warnings };
+    }
+    if (headers.includes("月份") && headers.includes("销量") && headers.includes("销售额($)")) {
+      const match = sheetName.match(/(B[A-Z0-9]{9})/i);
+      const monthly = salesRows(rows, "month");
+      const yearSheetName = workbook.SheetNames.find((name) => name.includes("年数据"));
+      const yearly = yearSheetName ? salesRows(rowsFromSheet(workbook.Sheets[yearSheetName]), "year") : [];
+      return { fileName, kind: "sales_history", sheetName, sourceAsin: match?.[1].toUpperCase() || null, ...empty, salesHistory: [...monthly, ...yearly], warnings };
     }
   }
-  return { fileName, kind: "unknown", sheetName: workbook.SheetNames[0] || "", sourceAsin: null, products: [], keywords: [], warnings: ["没有识别到卖家精灵产品或关键词表头。"] };
+  return { fileName, kind: "unknown", sheetName: workbook.SheetNames[0] || "", sourceAsin: null, ...empty, warnings: ["没有识别到支持的卖家精灵表头。"] };
 }
